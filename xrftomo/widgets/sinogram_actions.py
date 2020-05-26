@@ -44,75 +44,129 @@
 # #########################################################################
 
 from PyQt5 import QtGui, QtCore, QtWidgets
-from PyQt5.QtCore import pyqtSignal
-import numpy as np
-from pylab import *
-import xrftomo
-import matplotlib.pyplot as plt
-from scipy import ndimage, optimize, signal
 import scipy.fftpack as spf
-import string
-#import cv2
-from PIL import Image, ImageChops, ImageOps
 import tomopy
-
-
-
+from skimage import filters
+from skimage.measure import regionprops
+from skimage.feature import register_translation
+import numpy as np
 
 class SinogramActions(QtWidgets.QWidget):
-    dataSig = pyqtSignal(np.ndarray, name='dataSig')
-
     def __init__(self):
         super(SinogramActions, self).__init__()
-        self.x_shifts = None
-        self.y_shifts = None
-        self.centers = None
-    def runCenterOfMass(self, element, data, thetas):
-        '''
-        Center of mass alignment
-        Variables
-        -----------
-        element: int
-            element index
-        data: ndarray
-            4D xrf dataset ndarray [elements, theta, y,x]
-        thetas: ndarray
-            sorted projection angle list
-        '''
+    # def runCenterOfMass(self, element, data, thetas):
+    #     '''
+    #     Center of mass alignment
+    #     Variables
+    #     -----------
+    #     element: int
+    #         element index
+    #     data: ndarray
+    #         4D xrf dataset ndarray [elements, theta, y,x]
+    #     thetas: ndarray
+    #         sorted projection angle list
+    #     '''
+    #     num_projections = data.shape[1]
+    #     com = zeros(num_projections)
+    #     temp = zeros(data.shape[3])
+    #     temp2 = zeros(data.shape[3])
+    #     for i in arange(num_projections):
+    #         temp = sum(data[element, i, :, :] - data[element, i, :10, :10].mean(), axis=0)
+    #         numb2 = sum(temp)
+    #         for j in arange(data.shape[3]):
+    #             temp2[j] = temp[j] * j
+    #         if numb2 <= 0:
+    #             numb2 = 1
+    #         numb = float(sum(temp2)) / numb2
+    #         if numb == NaN:
+    #             numb = 0.000
+    #         com[i] = numb
+
+    #     x=thetas
+    #     fitfunc = lambda p, x: p[0] * sin(2 * pi / 360 * (x - p[1])) + p[2]
+    #     errfunc = lambda p, x, y: fitfunc(p, x) - y
+    #     p0 = [100, 100, 100]
+    #     self.centers, success = optimize.leastsq(errfunc, p0, args=(x, com))
+    #     centerOfMassDiff = fitfunc(self.centers, x) - com
+
+    #     #set some label within the sinogram widget to the string defined in the line below
+    #     # self.lbl.setText("Center of Mass: " + str(p1[2]))
+
+    #     num_projections = data.shape[1]
+    #     for i in arange(num_projections):
+    #         self.x_shifts[i] += int(centerOfMassDiff[i])
+    #         data[:, i, :, :] = np.roll(data[:, i, :, :], int(round(self.x_shifts[i])), axis=2)
+    #     #set some status label
+    #     self.alignmentDone()
+    #     # return data, self.x_shifts, self.centers
+    #     return data, self.x_shifts
+
+    def runCenterOfMass(self, element, data, thetas, weighted = True, shift_y = False):
+    #     '''
+    #     Center of mass alignment
+    #     Variables
+    #     -----------
+    #     element: int
+    #         element index
+    #     data: ndarray
+    #         4D xrf dataset ndarray [elements, theta, y,x]
+    #     thetas: ndarray
+    #         sorted projection angle list
+    #     weighted: bool
+    #         run center of mass or weighted center of mass
+    #     shift_y: bool
+    #         align in y as well as x 
+    #     '''
         num_projections = data.shape[1]
-        com = zeros(num_projections)
-        temp = zeros(data.shape[3])
-        temp2 = zeros(data.shape[3])
-        for i in arange(num_projections):
-            temp = sum(data[element, i, :, :] - data[element, i, :10, :10].mean(), axis=0)
-            numb2 = sum(temp)
-            for j in arange(data.shape[3]):
-                temp2[j] = temp[j] * j
-            if numb2 <= 0:
-                numb2 = 1
-            numb = float(sum(temp2)) / numb2
-            if numb == NaN:
-                numb = 0.000
-            com[i] = numb
+        view_center_x = data.shape[3]//2
+        view_center_y = data.shape[2]//2
 
-        x=thetas
-        fitfunc = lambda p, x: p[0] * sin(2 * pi / 360 * (x - p[1])) + p[2]
-        errfunc = lambda p, x, y: fitfunc(p, x) - y
-        p0 = [100, 100, 100]
-        self.centers, success = optimize.leastsq(errfunc, p0, args=(x, com))
-        centerOfMassDiff = fitfunc(self.centers, x) - com
+        x_shifts = []
+        y_shifts = []
+        w_x_shifts = []
+        w_y_shifts = []
+        tmp_lst = []
+        if weighted:
+            for i in range(num_projections):
+                image = data[element, i]
+                threshold_value = filters.threshold_otsu(image)
+                labeled_foreground = (image > threshold_value).astype(int)
+                properties = regionprops(labeled_foreground, image)
+                weighted_center_of_mass = properties[0].weighted_centroid
+                w_x_shifts.append(int(round(view_center_x - weighted_center_of_mass[1])))
+                w_y_shifts.append(int(round(view_center_y - weighted_center_of_mass[0])))
+                data = self.shiftProjectionX(data, i, w_x_shifts[i])
+                if shift_y:
+                    data = self.shiftProjectionY(data, i, w_y_shifts[i])
 
-        #set some label within the sinogram widget to the string defined in the line below
-        # self.lbl.setText("Center of Mass: " + str(p1[2]))
+            if not shift_y: 
+                w_y_shifts = np.asarray(w_y_shifts)*0
+            return data, np.asarray(w_x_shifts), np.asarray(w_y_shifts)
 
-        num_projections = data.shape[1]
-        for i in arange(num_projections):
-            self.x_shifts[i] += int(centerOfMassDiff[i])
-            data[:, i, :, :] = np.roll(data[:, i, :, :], int(round(self.x_shifts[i])), axis=2)
-        #set some status label
-        self.alignmentDone()
-        # return data, self.x_shifts, self.centers
-        return data, self.x_shifts
+        if not weighted:
+            for i in range(num_projections):
+                image = data[element, i]
+                threshold_value = filters.threshold_otsu(image)
+                labeled_foreground = (image > threshold_value).astype(int)
+                properties = regionprops(labeled_foreground, image)
+                center_of_mass = properties[0].centroid
+                x_shifts.append(int(round(view_center_x -center_of_mass[1])))
+                y_shifts.append(int(round(view_center_y - center_of_mass[0])))
+                data = self.shiftProjectionX(data, i, x_shifts[i])
+                if shift_y:
+                    data = self.shiftProjectionY(data, i, y_shifts[i])
+                    
+            if not shift_y: 
+                y_shifts = np.asarray(y_shifts)*0
+            return data, np.asarray(x_shifts), np.asarray(y_shifts)
+
+    def shiftProjectionX(self, data, index, displacement):
+        data[:,index] = np.roll(data[:,index],displacement,axis=2)
+        return data
+
+    def shiftProjectionY(self, data, index, displacement):
+        data[:,index] = np.roll(data[:,index],displacement,axis=1)
+        return data
 
     def shift(self, sinogramData, data, shift_number, col_number):
         '''
@@ -128,10 +182,10 @@ class SinogramActions(QtWidgets.QWidget):
         col_number: int
         '''
         num_projections = data.shape[1]
-        regShift = zeros(sinogramData.shape[0], dtype=np.int)
+        regShift = np.zeros(sinogramData.shape[0], dtype=np.int)
         sinogramData[col_number * 10:col_number * 10 + 10, :] = np.roll(sinogramData[col_number * 10:col_number * 10 + 10, :], shift_number, axis=1)
         regShift[col_number] += shift_number
-        for i in arange(num_projections):
+        for i in range(num_projections):
             data[:,i,:,:] = np.roll(data[:,i,:,:], regShift[i], axis=2)
         return data, sinogramData  
 
@@ -177,8 +231,9 @@ class SinogramActions(QtWidgets.QWidget):
             4D xrf dataset ndarray [elements, theta, y,x]
         '''
         num_projections = data.shape[1]
-
-        for i in arange(num_projections - 1):
+        x_shifts = np.zeros(num_projections)
+        y_shifts = np.zeros(num_projections)
+        for i in range(num_projections - 1):
             a = data[element, i, :, :]
             b = data[element, i + 1, :, :]
 
@@ -196,13 +251,13 @@ class SinogramActions(QtWidgets.QWidget):
 
             data[:, i + 1, :, :] = np.roll(data[:, i + 1, :, :], t0, axis=1)
             data[:, i + 1, :, :] = np.roll(data[:, i + 1, :, :], t1, axis=2)
-            self.x_shifts[i + 1] += t1
-            self.y_shifts[i + 1] += -t0
+            x_shifts[i + 1] += t1
+            y_shifts[i + 1] += -t0
 
         self.alignmentDone()
-        return data, self.x_shifts, self.y_shifts
+        return data, x_shifts, y_shifts
 
-    def crossCorrelate2(self, data):
+    def crossCorrelate2(self, element, data):
         '''
         cross correlate image registration aplies to all loaded elements.
         Variables
@@ -211,30 +266,21 @@ class SinogramActions(QtWidgets.QWidget):
             4D xrf dataset ndarray [elements, theta, y,x]
         '''
         num_projections = data.shape[1]
-        for i in arange(num_projections - 1):
-            flat = np.sum(data, axis=0)
-            a = flat[i]
-            b = flat[i + 1]
-            fa = spf.fft2(a)
-            fb = spf.fft2(b)
-            shape = a.shape
+        x_shifts = np.zeros(num_projections)
+        y_shifts = np.zeros(num_projections)
 
-            c = abs(spf.ifft2(fa * fb.conjugate()))
+        for i in range(1, num_projections):
 
-            t0, t1 = np.unravel_index(np.argmax(c), a.shape)
+            shift, error, diffphase = register_translation(data[element,i-1], data[element,i])
+            # shift, error, diffphase = register_translation(data[element,i-1], data[element,i], 100)
 
-            if t0 > shape[0] // 2:
-                t0 -= shape[0]
-            if t1 > shape[1] // 2:
-                t1 -= shape[1]
-
-            data[:, i + 1, :, :] = np.roll(data[:, i + 1, :, :], t0, axis=1)
-            data[:, i + 1, :, :] = np.roll(data[:, i + 1, :, :], t1, axis=2)
-            self.x_shifts[i + 1] += t1
-            self.y_shifts[i + 1] += -t0
+            x_shifts[i] += int(shift[1])
+            y_shifts[i] += int(shift[0])
+            data[:, i, :, :] = np.roll(data[:, i, :, :], int(shift[0]), axis=1)
+            data[:, i, :, :] = np.roll(data[:, i, :, :], int(shift[1]), axis=2)
 
         self.alignmentDone()
-        return data, self.x_shifts, self.y_shifts
+        return data, x_shifts, y_shifts
 
     def phaseCorrelate(self, element, data):
         '''
@@ -247,7 +293,9 @@ class SinogramActions(QtWidgets.QWidget):
             4D xrf dataset ndarray [elements, theta, y,x]
         '''
         num_projections = data.shape[1]
-        for i in arange(num_projections - 1):
+        x_shifts = np.zeros(num_projections)
+        y_shifts = np.zeros(num_projections)
+        for i in range(num_projections - 1):
             # onlyfilenameIndex=self.fileNames[i+1].rfind("/")
             a = data[element, i, :, :]
             b = data[element, i + 1, :, :]
@@ -265,11 +313,10 @@ class SinogramActions(QtWidgets.QWidget):
 
             data[:, i + 1, :, :] = np.roll(data[:, i + 1, :, :], t0, axis=1)
             data[:, i + 1, :, :] = np.roll(data[:, i + 1, :, :], t1, axis=2)
-            self.x_shifts[i + 1] += t1
-            self.y_shifts[i + 1] += -t0
+            x_shifts[i + 1] += t1
+            y_shifts[i + 1] += -t0
         self.alignmentDone()
-        return data, self.x_shifts, self.y_shifts
-
+        return data, x_shifts, y_shifts
     # def align_y_top(self, element, data):
     #     '''
     #     This alingment method sets takes a hotspot or a relatively bright and isolated part of the projection and moves it to the 
@@ -311,21 +358,21 @@ class SinogramActions(QtWidgets.QWidget):
         loc: bool
             0 = bottom, 1 = top
         '''
-        self.data = data
         num_projections = data.shape[1]
+        y_shifts = np.zeros(num_projections)
         tmp_data = data[element,:,:,:]
         bounds = self.get_boundaries(tmp_data,threshold)
         edge = np.asarray(bounds[2+loc])
         translate = -edge
 
         # self.data = np.roll(data, int(np.round(self.y_shifts)), axis=1)
-        self.y_shifts -=translate
+        y_shifts -= translate
 
         for i in range(num_projections):
-            self.data[:,i,:,:] = np.roll(data[:,i,:,:], int(np.round(translate[i])), axis=1)
+            data[:,i] = np.roll(data[:,i], int(np.round(translate[i])), axis=1)
 
         self.alignmentDone()
-        return self.y_shifts, self.data 
+        return y_shifts, data 
 
     def get_boundaries(self, data, coeff):
         '''
@@ -397,27 +444,26 @@ class SinogramActions(QtWidgets.QWidget):
             number of iterations
         '''
         num_projections = data.shape[1]
+        x_shifts = np.zeros(num_projections)
+        y_shifts = np.zeros(num_projections)
         prj = data[element]
         # prj = np.sum(data, axis=0)
         prj = tomopy.remove_nan(prj, val=0.0)
         prj[np.where(prj == np.inf)] = 0.0
-        self.thetas = thetas
-
 
         # self.get_iter_paraeters()
-
 
         prj, sx, sy, conv = tomopy.align_joint(prj, thetas, iters=iters, pad=pad,
                             blur=blur_bool, rin=rin, rout=rout, center=center, algorithm=algorithm, 
                             upsample_factor=upsample_factor, save=save_bool, debug=debug_bool)
-        self.x_shifts = np.round(sx).astype(int)
-        self.y_shifts = np.round(sy).astype(int)
+        x_shifts = np.round(sx).astype(int)
+        y_shifts = np.round(sy).astype(int)
 
         for i in range(num_projections):
-            data[:,i,:,:] = np.roll(data[:,i,:,:], int(np.round(self.y_shifts[i])), axis=1)
-            data[:,i,:,:] = np.roll(data[:,i,:,:], int(np.round(self.x_shifts[i])), axis=2)
+            data[:,i,:,:] = np.roll(data[:,i,:,:], int(np.round(y_shifts[i])), axis=1)
+            data[:,i,:,:] = np.roll(data[:,i,:,:], int(np.round(x_shifts[i])), axis=2)
         
-        return self.x_shifts, self.y_shifts, data
+        return x_shifts, y_shifts, data
 
     def alignFromText2(self, fileName, data):
         '''
@@ -439,13 +485,13 @@ class SinogramActions(QtWidgets.QWidget):
             #TODO: if text file is not in correct format, do nothing, return and display reason for error.
             file = open(fileName[0], 'r')
             read = file.readlines()
-            datacopy = zeros(data.shape)
+            datacopy = np.zeros(data.shape)
             datacopy[...] = data[...]
             data[np.isnan(data)] = 1
             num_projections = data.shape[1]
             y_shifts = np.zeros(num_projections)
             x_shifts = np.zeros(num_projections)
-            for i in arange(num_projections):
+            for i in range(num_projections):
                 j = i + 1
                 secondcol = read[j].rfind(",")
                 firstcol = read[j][:secondcol].rfind(",")
@@ -456,7 +502,6 @@ class SinogramActions(QtWidgets.QWidget):
 
             file.close()
             self.alignmentDone()
-            # return data, self.x_shifts, self.y_shifts, self.centers
             return data, x_shifts, y_shifts
         except IndexError:
             print("index missmatch between align file and current dataset ")
@@ -502,9 +547,9 @@ class SinogramActions(QtWidgets.QWidget):
             # Default window is 2*rows//10
             med = np.median(T_phase)
             if limit == None:
-                return tmean(T_phase, limits = (med-10, med+10))/(np.pi*2)*cols
+                return np.tmean(T_phase, limits = (med-10, med+10))/(np.pi*2)*cols
             else:
-                return tmean(T_phase, limits = (med-limit, med+limit))/(np.pi*2)*cols
+                return np.tmean(T_phase, limits = (med-limit, med+limit))/(np.pi*2)*cols
         else:
             # Use value from center row as center shift.
             # Fastest option.

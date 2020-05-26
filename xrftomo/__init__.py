@@ -55,13 +55,13 @@ from xrftomo.file_io.writer import *
 from xrftomo.reco import *
 from xrftomo.elements import *
 from xrftomo.widgets.custom_view_box import *
+from xrftomo.widgets.difference_view import *
 
 from xrftomo.models.element_table import *
 from xrftomo.models.file_table import *
 from xrftomo.widgets.file_loader import *
 
 from xrftomo.widgets.image_process import *
-# from xrftomo.widgets.image_and_histogram import *
 from xrftomo.widgets.image_process_controls import *
 from xrftomo.widgets.image_view import *
 from xrftomo.widgets.image_process_actions import *

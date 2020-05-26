@@ -46,10 +46,7 @@
 import xrftomo
 from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtCore import pyqtSignal
-# from widgets.sinogram_view import SinogramView
-# from widgets.sinogram_controls_widget import SinogramControlsWidget
 import pyqtgraph
-from pylab import *
 import numpy as np
 
 class SinogramWidget(QtWidgets.QWidget):
@@ -72,23 +69,27 @@ class SinogramWidget(QtWidgets.QWidget):
         self.ViewControl = xrftomo.SinogramControlsWidget()
         self.sinoView = xrftomo.SinogramView()
         self.imageView = xrftomo.ImageView()
+        self.diffView = xrftomo.differenceView()
         self.actions = xrftomo.SinogramActions()
-
 
         self.view_options = QtWidgets.QComboBox()
         self.view_options.setFixedWidth(button2size)
-        for j in ["sinogram view", "projection view"]:
+        for j in ["sinogram view", "projection view", "difference view"]:
             self.view_options.addItem(j)
 
-        self.sld = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
-        self.sld2 = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)
+        self.sld = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)    #sino slider
+        self.sld2 = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)   #image slider
+        self.sld3 = QtWidgets.QSlider(QtCore.Qt.Horizontal, self)   #image slider
         self.sld.setValue(1)
         self.lcd = QtWidgets.QLCDNumber(self)
         self.lcd2 = QtWidgets.QLCDNumber(self)
+        self.lcd3 = QtWidgets.QLCDNumber(self)
         self.hist = pyqtgraph.HistogramLUTWidget()
         self.hist.setMinimumSize(120,120)
         self.hist.setMaximumWidth(120)
         self.hist.setImageItem(self.sinoView.projView)
+        self.hist.setImageItem(self.imageView.projView)
+        self.hist.setImageItem(self.diffView.projView)
         self.data = np.ndarray(shape=(1, 10, 10, 10), dtype=float)
         self.x_shifts = None
         self.y_shifts = None
@@ -96,8 +97,8 @@ class SinogramWidget(QtWidgets.QWidget):
         self.data = None
         self.sinogramData = None
 
-        self.ViewControl.btn1.clicked.connect(self.centerOfMass_params)
-        # self.ViewControl.btn1.clicked.connect(self.centerOfMass2_params)
+        self.ViewControl.btn1.clicked.connect(self.ViewControl.com_options.show)
+        self.ViewControl.run_com.clicked.connect(self.centerOfMass_params)
         self.ViewControl.btn2.clicked.connect(self.crossCorrelate_params)
         self.ViewControl.btn3.clicked.connect(self.phaseCorrelate_params)
         self.ViewControl.btn6.clicked.connect(self.ViewControl.iter_parameters.show)
@@ -114,19 +115,25 @@ class SinogramWidget(QtWidgets.QWidget):
         self.ViewControl.center.clicked.connect(self.updateCenterFindParameters)
         self.sld.valueChanged.connect(self.sinoSliderChanged)
         self.sld2.valueChanged.connect(self.imageSliderChanged)
+        self.sld3.valueChanged.connect(self.diffSliderChanged)
         self.sinoView.keyPressSig.connect(self.shiftEvent_params)
         self.ViewControl.combo1.currentIndexChanged.connect(self.elementChanged)
         self.view_options.currentIndexChanged.connect(self.display)
 
+        self.diffView.keyPressSig.connect(self.keyProcess)
+
         self.stack1 = QtWidgets.QWidget()
         self.stack2 = QtWidgets.QWidget()
+        self.stack3 = QtWidgets.QWidget()
 
         self.stack1UI()
         self.stack2UI()
+        self.stack3UI()
 
         self.Stack = QtWidgets.QStackedWidget (self)
         self.Stack.addWidget(self.stack1)
         self.Stack.addWidget(self.stack2)
+        self.Stack.addWidget(self.stack3)
 
         vb1 = QtWidgets.QVBoxLayout()
         vb1.addWidget(self.view_options)
@@ -179,10 +186,55 @@ class SinogramWidget(QtWidgets.QWidget):
 
         self.stack2.setLayout(vb)
 
+
+    def stack3UI(self):
+
+        lbl = QtWidgets.QLabel('Angle')
+        hb0 = QtWidgets.QHBoxLayout()
+        hb0.addWidget(lbl)
+        hb0.addWidget(self.lcd3)
+        hb0.addWidget(self.sld3)
+
+        vb = QtWidgets.QVBoxLayout()
+        vb.addWidget(self.diffView)
+        vb.addLayout(hb0)
+
+        self.stack3.setLayout(vb)
+
     def display(self,i):
         self.Stack.setCurrentIndex(i)
         #change slider range and label here depending on i
 
+    def keyProcess(self, command):
+        index = self.sld3.value()
+        data = self.data
+
+        if command == 'A': #previous projection
+            self.sld3.setValue(self.sld3.value() - 1)
+            self.imageSliderChanged()
+        if command == 'D':  #next projection
+            self.sld3.setValue(self.sld3.value() + 1)
+            self.imageSliderChanged()
+        if command == 'left':
+            self.x_shifts[index] -=1
+            data = self.actions.shiftProjectionX(self.data, index, -1)
+            self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+            self.dataChangedSig.emit(data)
+        if command == 'right':
+            self.x_shifts[index] +=1
+            data = self.actions.shiftProjectionX(self.data, index, 1)
+            self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+            self.dataChangedSig.emit(data)
+        if command == 'up':
+            self.y_shifts[index] +=1
+            data = self.actions.shiftProjectionY(self.data, index, -1)
+            self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+            self.dataChangedSig.emit(data)
+        if command == 'down':
+            self.y_shifts[index] -=1
+            data = self.actions.shiftProjectionY(self.data, index, 1)
+            self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+            self.dataChangedSig.emit(data)
 
     def showImgProcess(self):
         # self.posMat = np.zeros((5,int(self.data.shape[1]),2))
@@ -191,10 +243,54 @@ class SinogramWidget(QtWidgets.QWidget):
         num_projections  = self.data.shape[1]
         self.sld2.setRange(0, num_projections - 1)
 
+    def showDiffProcess(self):
+        num_projections  = self.data.shape[1]
+        self.sld3.setRange(0, num_projections - 1)
+
     def imageSliderChanged(self):
         index = self.sld2.value()
         self.updateSliderSlot(index)
-        # self.sliderChangedSig.emit(index)
+
+    def diffSliderChanged(self):
+        index = self.sld3.value()
+        self.updateDiffSliderSlot(index)
+
+    def updateDiffSliderSlot(self, index):
+        if len(self.thetas) == 0:
+            return
+        angle = round(self.thetas[index],3)
+        self.lcd3.display(angle)
+        self.sld3.setValue(index)
+        self.updateDiffImage(index)
+        
+    def updateDiffImage(self, index):
+        element = self.ViewControl.combo1.currentIndex()
+        x_index = int(self.data.shape[3] * 0.3)
+        y_index = int(self.data.shape[2]* 0.3)
+
+        # position = [0.0, 0.25, 0.4, 0.6, 0.75, 1.0]
+        # colors = [[64, 0, 0, 255], [255, 0, 0, 255], [255, 255, 255, 255], [255, 255, 255, 255], [0, 0, 255, 255], [0, 0, 64, 255]]
+        # bi_polar_color_map = pyqtgraph.ColorMap(position, colors)
+        # lookup_table = bi_polar_color_map.getLookupTable(0.0, 1.0, 256)
+
+
+        # if index < self.data.shape[1]-1:
+        #     img = self.data[element, index] - self.data[element, index+1]
+        #     img = img[y_index:-y_index, x_index:-x_index]
+        # else:
+        #     img = self.data[element, index] - self.data[element, 0]
+        #     img = img[x_index:-x_index, y_index:-y_index]
+
+        if index < self.data.shape[1]-1:
+            img = self.data[element, index]/2 + self.data[element, index+1]/2
+            img = img[y_index:-y_index, x_index:-x_index]
+        else:
+            img = self.data[element, index]/2 + self.data[element, 0]/2
+            img = img[x_index:-x_index, y_index:-y_index]
+
+        self.diffView.projView.setImage(img, border='w')
+        # self.diffView.projView.setLookupTable(lookup_table)
+        
 
     def updateSliderSlot(self, index):
         if len(self.thetas) == 0:
@@ -203,13 +299,21 @@ class SinogramWidget(QtWidgets.QWidget):
         element = self.ViewControl.combo1.currentIndex()
         self.lcd2.display(angle)
         self.sld2.setValue(index)
-        self.imageView.projView.setImage(self.data[element, index, :, :], border='w')
+        # self.imageView.projView.setImage(self.data[element, index, :, :], border='w')
+        self.imageView.projView.setImage(self.data[element, index, ::-1, :], border='w')
 
     def updateImgSldRange(self, index, thetas):
         element = self.ViewControl.combo1.currentIndex()
         self.sld2.setRange(0, len(self.thetas) -1)
         self.lcd2.display(thetas[index])
         self.sld2.setValue(index)
+        self.imageChanged()
+
+    def updateDiffSldRange(self, index, thetas):
+        element = self.ViewControl.combo1.currentIndex()
+        self.sld3.setRange(0, len(self.thetas) -1)
+        self.lcd3.display(thetas[index])
+        self.sld3.setValue(index)
         self.imageChanged()
 
     def showSinogram(self):
@@ -247,9 +351,14 @@ class SinogramWidget(QtWidgets.QWidget):
 
     def imageChanged(self):
         index = self.sld2.value()
+        index3 = self.sld3.value()
         element = self.ViewControl.combo1.currentIndex()
         self.sinogram(element)
-        self.imageView.projView.setImage(self.data[element, index, :, :], border='w')
+        # self.imageView.projView.setImage(self.data[element, index, :, :], border='w')
+        self.imageView.projView.setImage(self.data[element, index, ::-1, :], border='w')
+
+
+        self.updateDiffImage(index3)
 
     def ySizeChanged(self, ySize):
         self.sld.setRange(1, ySize)
@@ -263,7 +372,9 @@ class SinogramWidget(QtWidgets.QWidget):
     def updateImgElementSlot(self, element, projection = None):
         if projection == None:
            projection =  self.sld.value()
-        self.imageView.projView.setImage(self.data[element, projection, :, :], border='w')
+        # self.imageView.projView.setImage(self.data[element, projection, :, :], border='w')
+        self.imageView.projView.setImage(self.data[element, projection, ::-1, :], border='w')
+
 
     def center_tomopy_params(self):        
         valid = self.ViewControl.validate_move2center_parameters()
@@ -303,10 +414,10 @@ class SinogramWidget(QtWidgets.QWidget):
     def move2center_params(self):
         data = self.data
         rot_center = int(np.round(float(self.ViewControl.center_1.text().split()[1])))
-        x_shifts = self.data.shape[3]//2 - rot_center
+        x_shifts = data.shape[3]//2 - rot_center
 
         if x_shifts<0:
-            data = self.actions.shiftDataX(self.data, x_shifts)
+            data = self.actions.shiftDataX(data, x_shifts)
             self.alignmentChangedSig.emit(self.x_shifts + x_shifts, self.y_shifts)
             self.dataChangedSig.emit(data)
 
@@ -344,15 +455,15 @@ class SinogramWidget(QtWidgets.QWidget):
             sinodata = self.data[element, :, :, :]
         except TypeError:
             return
-        self.sinogramData = zeros([sinodata.shape[0] * 10, sinodata.shape[2]], dtype=float32)
+        self.sinogramData = np.zeros([sinodata.shape[0] * 10, sinodata.shape[2]], dtype=np.float32)
         num_projections = self.data.shape[1]
 
         try: #TODO: fails when cropping
-            for i in arange(num_projections):
+            for i in range(num_projections):
                 self.sinogramData[i * 10:(i + 1) * 10, :] = sinodata[i, self.sld.value()-1, :]
         except IndexError:
             return
-        self.sinogramData[isinf(self.sinogramData)] = 0.001
+        self.sinogramData[np.isinf(self.sinogramData)] = 0.001
         self.sinoView.projView.setImage(self.sinogramData, border='w')
         if len(self.thetas) > 0:
             self.sinoView.projView.setRect(QtCore.QRect(round(self.thetas[0]), 0, round(self.thetas[-1])- round(self.thetas[0]), self.sinogramData.shape[1]))
@@ -361,45 +472,38 @@ class SinogramWidget(QtWidgets.QWidget):
 
     def centerOfMass_params(self):
         element, row, data, thetas = self.get_params()
-        data = self.data
-        thetas = self.thetas
-        self.data, self.x_shifts = self.actions.runCenterOfMass(element, data, thetas)
-        self.dataChangedSig.emit(self.data)
-        self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+        wcom = self.ViewControl.weighted_com_checkbox.isChecked()
+        shiftXY = self.ViewControl.shiftXY_checkbox.isChecked()
+        data, x_shifts, y_shifts = self.actions.runCenterOfMass(element, data, thetas, wcom, shiftXY)
+        self.dataChangedSig.emit(data)
+        self.alignmentChangedSig.emit(self.x_shifts + x_shifts, self.y_shifts + y_shifts)
         return
-        
-    # def centerOfMass2_params(self):
-    #     element, row, data, thetas = self.get_params()
-    #     self.data, self.x_shifts, self.centers = self.actions.runCenterOfMass2(element, row, data, thetas)
-    #     self.dataChangedSig.emit(self.data)
-    #     self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
-    #     return
-
+ 
     def shiftEvent_params(self, shift_dir, col_number):
         sinoData = self.sinogramData
         data = self.data
         thetas = self.thetas
 
-        self.data, self.sinogramData = self.actions.shift(sinoData, data, shift_dir, col_number)
+        data, self.sinogramData = self.actions.shift(sinoData, data, shift_dir, col_number)
         self.x_shifts[col_number] += shift_dir
-        self.dataChangedSig.emit(self.data)
+        self.dataChangedSig.emit(data)
         self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
         return
 
     def crossCorrelate_params(self):
         data = self.data
         element = self.ViewControl.combo1.currentIndex()
-        data, x_shifts, y_shifts = self.actions.crossCorrelate(element, data)
+        data, x_shifts, y_shifts = self.actions.crossCorrelate2(element, data)
         self.dataChangedSig.emit(self.data)
-        self.alignmentChangedSig.emit(self.x_shifts + x_shifts, self.y_shifts + x_shifts)
+        self.alignmentChangedSig.emit(self.x_shifts + x_shifts, self.y_shifts + y_shifts)
         return
 
     def phaseCorrelate_params(self):
         data = self.data
         element = self.ViewControl.combo1.currentIndex()
-        self.data, self.x_shifts, self.y_shifts = self.actions.phaseCorrelate(element, data)
-        self.dataChangedSig.emit(self.data)
-        self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+        data, x_shifts, y_shifts = self.actions.phaseCorrelate(element, data)
+        self.dataChangedSig.emit(data)
+        self.alignmentChangedSig.emit(self.x_shifts+x_shifts, self.y_shifts+y_shifts)
         return
 
     def move2edge_params(self):
@@ -417,9 +521,9 @@ class SinogramWidget(QtWidgets.QWidget):
 
         threshold = int(self.ViewControl.threshold_textbox.text())
 
-        self.y_shifts, self.data = self.actions.align2edge(element, data, loc, threshold) 
-        self.dataChangedSig.emit(self.data)
-        self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+        y_shifts, data = self.actions.align2edge(element, data, loc, threshold) 
+        self.dataChangedSig.emit(data)
+        self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts+y_shifts)
         return
 
         
@@ -434,10 +538,9 @@ class SinogramWidget(QtWidgets.QWidget):
         shift = int(self.ViewControl.shift_textbox.text())
         slope = int(self.ViewControl.slope_adjust_textbox.text())
             
-        x_shifts, self. data, self.sinogramData = self.actions.slope_adjust(sinogramData, data, shift, slope)
-        self.x_shifts += x_shifts
-        self.dataChangedSig.emit(self.data)
-        self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+        x_shifts, data, self.sinogramData = self.actions.slope_adjust(sinogramData, data, shift, slope)
+        self.dataChangedSig.emit(data)
+        self.alignmentChangedSig.emit(self.x_shifts+x_shifts, self.y_shifts)
         return
 
     # def matchTermplate_params(self):
@@ -478,9 +581,9 @@ class SinogramWidget(QtWidgets.QWidget):
             rin = None
             rout = None
 
-        self.x_shifts, self.y_shifts, self.data = self.actions.iterative_align(element, data, thetas, pad, blur_bool, rin, rout, center, algorithm, upsample_factor, save_bool, debug_bool, iters)
-        self.dataChangedSig.emit(self.data)
-        self.alignmentChangedSig.emit(self.x_shifts, self.y_shifts)
+        x_shifts, y_shifts, data = self.actions.iterative_align(element, data, thetas, pad, blur_bool, rin, rout, center, algorithm, upsample_factor, save_bool, debug_bool, iters)
+        self.dataChangedSig.emit(data)
+        self.alignmentChangedSig.emit(self.x_shifts+x_shifts, self.y_shifts+y_shifts)
         return
 
         #save parameters 
@@ -488,7 +591,6 @@ class SinogramWidget(QtWidgets.QWidget):
         ##maybe put this entire function within 'iter_align_params'
 
         pass
-
 
     def alignFromText2_params(self):
         fileName = QtGui.QFileDialog.getOpenFileName(self, "Open File", QtCore.QDir.currentPath(), "TXT (*.txt)")
